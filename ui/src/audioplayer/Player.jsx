@@ -17,8 +17,10 @@ import config from '../config'
 import useStyle from './styles'
 import AudioTitle from './AudioTitle'
 import {
+  addTracks,
   clearQueue,
   currentPlaying,
+  playTracks,
   setPlayMode,
   setVolume,
   syncQueue,
@@ -252,10 +254,44 @@ const Player = () => {
   )
 
   const onAudioEnded = useCallback(
-    (currentPlayId, audioLists, info) => {
+    async (currentPlayId, audioLists, info) => {
       setScrobbled(false)
       setStartTime(null)
       dispatch(currentPlaying(info))
+
+      // Check if we've reached the end of the playlist
+      const currentIndex = audioLists.findIndex(item => item.uuid === info.uuid)
+      const isLastSong = currentIndex === audioLists.length - 1
+
+      if (isLastSong) {
+        try {
+          // Fetch a random song using the Subsonic API
+          const randomSongsResponse = await subsonic.getRandomSongs(1)
+
+          if (randomSongsResponse.json &&
+              randomSongsResponse.json['subsonic-response'] &&
+              randomSongsResponse.json['subsonic-response'].randomSongs &&
+              randomSongsResponse.json['subsonic-response'].randomSongs.song &&
+              randomSongsResponse.json['subsonic-response'].randomSongs.song.length > 0) {
+
+            const randomSong = randomSongsResponse.json['subsonic-response'].randomSongs.song[0]
+
+            // Create a new queue with all existing songs plus the random song
+            const currentQueue = {}
+            audioLists.forEach(item => {
+              currentQueue[item.trackId] = item.song
+            })
+            currentQueue[randomSong.id] = randomSong
+
+            // Use playTracks to replace the queue and start playing the random song
+            dispatch(playTracks(currentQueue, null, randomSong.id))
+          }
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.log('Error fetching random song:', error)
+        }
+      }
+
       dataProvider
         .getOne('keepalive', { id: info.trackId })
         // eslint-disable-next-line no-console
