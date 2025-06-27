@@ -106,6 +106,62 @@ const removeItems = () => {
   localStorage.removeItem('subsonic-salt')
   localStorage.removeItem('subsonic-token')
   localStorage.removeItem('is-authenticated')
+
+  // Clean up OIDC auth token cookie on logout
+  document.cookie =
+    'oidc_auth_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;'
 }
+
+// Check for OIDC authentication after redirect
+function checkOIDCAuthentication() {
+  const urlParams = new URLSearchParams(window.location.search)
+  if (urlParams.get('oidc_login') === 'success') {
+    // Get authentication data from cookies
+    const token = getCookie('oidc_auth_token')
+    const payloadCookie = getCookie('oidc_auth_payload')
+
+    if (token && payloadCookie) {
+      try {
+        // Decode base64 encoded payload
+        const payloadJson = atob(payloadCookie)
+        const payload = JSON.parse(payloadJson)
+        payload.token = token
+        jwtDecode(token) // Validate token
+        storeAuthenticationInfo(payload)
+
+        // Clean up payload cookie (but keep auth token for browser requests)
+        document.cookie =
+          'oidc_auth_payload=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;'
+
+        // Clean up URL
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname + window.location.hash,
+        )
+
+        // Avoid "going to create admin" dialog after logout/login without a refresh
+        config.firstTime = false
+        removeHomeCache()
+
+        return true
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('Error processing OIDC authentication:', e)
+      }
+    }
+  }
+  return false
+}
+
+function getCookie(name) {
+  const value = `; ${document.cookie}`
+  const parts = value.split(`; ${name}=`)
+  if (parts.length === 2) return parts.pop().split(';').shift()
+  return null
+}
+
+// Check for OIDC authentication on load
+checkOIDCAuthentication()
 
 export default authProvider

@@ -8,6 +8,7 @@ import CardActions from '@material-ui/core/CardActions'
 import CircularProgress from '@material-ui/core/CircularProgress'
 import Link from '@material-ui/core/Link'
 import TextField from '@material-ui/core/TextField'
+import { Divider } from '@material-ui/core'
 import { ThemeProvider, makeStyles } from '@material-ui/core/styles'
 import {
   createMuiTheme,
@@ -18,6 +19,7 @@ import {
   useTranslate,
   useVersion,
 } from 'react-admin'
+import { FiUser } from 'react-icons/fi'
 import Logo from '../icons/android-icon-192x192.png'
 
 import Notification from './Notification'
@@ -80,6 +82,26 @@ const useStyles = makeStyles(
       padding: '0 1em 1em 1em',
     },
     button: {},
+    oidcButton: {
+      marginTop: '1em',
+      backgroundColor: '#4285f4',
+      color: 'white',
+      '&:hover': {
+        backgroundColor: '#357ae8',
+      },
+    },
+    oidcIcon: {
+      marginRight: '8px',
+    },
+    divider: {
+      margin: '1em 0',
+    },
+    orText: {
+      textAlign: 'center',
+      margin: '0.5em 0',
+      color: '#666',
+      fontSize: '0.875em',
+    },
     systemNameLink: {
       textDecoration: 'none',
     },
@@ -172,6 +194,26 @@ const FormLogin = ({ loading, handleSubmit, validate }) => {
                   {loading && <CircularProgress size={25} thickness={2} />}
                   {translate('ra.auth.sign_in')}
                 </Button>
+                {config.oidcEnabled && (
+                  <>
+                    <div className={classes.orText}>
+                      {translate('ra.auth.or')}
+                    </div>
+                    <Button
+                      variant="outlined"
+                      color="primary"
+                      disabled={loading}
+                      className={classes.oidcButton}
+                      fullWidth
+                      onClick={() => {
+                        window.location.href = `${config.baseURL}/auth/oidc/login`
+                      }}
+                    >
+                      <FiUser className={classes.oidcIcon} />
+                      {translate('ra.auth.sign_in_with_oidc')}
+                    </Button>
+                  </>
+                )}
               </CardActions>
             </Card>
             <Notification />

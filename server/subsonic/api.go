@@ -76,6 +76,7 @@ func (api *Router) routes() http.Handler {
 
 	// Protected
 	r.Group(func(r chi.Router) {
+		r.Use(server.JWTVerifier)
 		r.Use(checkRequiredParameters)
 		r.Use(authenticate(api.ds))
 		r.Use(server.UpdateLastAccessMiddleware(api.ds))

@@ -181,7 +181,9 @@ const Player = () => {
 
       // Check if we need to add an endless song when near the end of the last song
       if (endless && !endlessAdded && progress > 95) {
-        const currentIndex = playerState.queue.findIndex(item => item.uuid === info.uuid)
+        const currentIndex = playerState.queue.findIndex(
+          (item) => item.uuid === info.uuid,
+        )
         const isLastSong = currentIndex === playerState.queue.length - 1
 
         if (isLastSong) {
@@ -190,13 +192,17 @@ const Player = () => {
             // Fetch a random song using the Subsonic API
             const randomSongsResponse = await subsonic.getRandomSongs(1)
 
-            if (randomSongsResponse.json &&
-                randomSongsResponse.json['subsonic-response'] &&
-                randomSongsResponse.json['subsonic-response'].randomSongs &&
-                randomSongsResponse.json['subsonic-response'].randomSongs.song &&
-                randomSongsResponse.json['subsonic-response'].randomSongs.song.length > 0) {
-
-              const randomSong = randomSongsResponse.json['subsonic-response'].randomSongs.song[0]
+            if (
+              randomSongsResponse.json &&
+              randomSongsResponse.json['subsonic-response'] &&
+              randomSongsResponse.json['subsonic-response'].randomSongs &&
+              randomSongsResponse.json['subsonic-response'].randomSongs.song &&
+              randomSongsResponse.json['subsonic-response'].randomSongs.song
+                .length > 0
+            ) {
+              const randomSong =
+                randomSongsResponse.json['subsonic-response'].randomSongs
+                  .song[0]
 
               // Add the random song to play next (right after current song)
               dispatch(playNext({ [randomSong.id]: randomSong }))
@@ -207,7 +213,7 @@ const Player = () => {
                 sendNotification(
                   'Endless Play',
                   'No random songs available to continue playback',
-                  null
+                  null,
                 )
               }
             }
@@ -218,7 +224,7 @@ const Player = () => {
               sendNotification(
                 'Endless Play Error',
                 'Failed to fetch random song for continuous playback',
-                null
+                null,
               )
             }
           }
@@ -240,7 +246,17 @@ const Player = () => {
         setScrobbled(true)
       }
     },
-    [startTime, scrobbled, nextSong, preloaded, endless, endlessAdded, playerState.queue, dispatch, showNotifications],
+    [
+      startTime,
+      scrobbled,
+      nextSong,
+      preloaded,
+      endless,
+      endlessAdded,
+      playerState.queue,
+      dispatch,
+      showNotifications,
+    ],
   )
 
   const onAudioVolumeChange = useCallback(

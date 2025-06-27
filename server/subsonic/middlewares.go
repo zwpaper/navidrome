@@ -103,27 +103,50 @@ func authenticate(ds model.DataStore) func(next http.Handler) http.Handler {
 					log.Error(ctx, "API: Error authenticating username", "auth", authType, "username", username, "remoteAddr", r.RemoteAddr, err)
 				}
 			} else {
-				p := req.Params(r)
-				username, _ := p.String("u")
-				pass, _ := p.String("p")
-				token, _ := p.String("t")
-				salt, _ := p.String("s")
-				jwt, _ := p.String("jwt")
-
-				usr, err = ds.User(ctx).FindByUsernameWithPassword(username)
-				if errors.Is(err, context.Canceled) {
-					log.Debug(ctx, "API: Request canceled when authenticating", "auth", "subsonic", "username", username, "remoteAddr", r.RemoteAddr, err)
-					return
+				// Try JWT authentication first (from headers/cookies)
+				jwtUsername := server.UsernameFromOIDCToken(r)
+				if jwtUsername == "" {
+					jwtUsername = server.UsernameFromToken(r)
 				}
-				switch {
-				case errors.Is(err, model.ErrNotFound):
-					log.Warn(ctx, "API: Invalid login", "auth", "subsonic", "username", username, "remoteAddr", r.RemoteAddr, err)
-				case err != nil:
-					log.Error(ctx, "API: Error authenticating username", "auth", "subsonic", "username", username, "remoteAddr", r.RemoteAddr, err)
-				default:
-					err = validateCredentials(usr, pass, token, salt, jwt)
-					if err != nil {
+
+				if jwtUsername != "" {
+					// JWT authentication successful
+					usr, err = ds.User(ctx).FindByUsername(jwtUsername)
+					if errors.Is(err, context.Canceled) {
+						log.Debug(ctx, "API: Request canceled when authenticating", "auth", "jwt-header", "username", jwtUsername, "remoteAddr", r.RemoteAddr, err)
+						return
+					}
+					if errors.Is(err, model.ErrNotFound) {
+						log.Warn(ctx, "API: Invalid login", "auth", "jwt-header", "username", jwtUsername, "remoteAddr", r.RemoteAddr, err)
+					} else if err != nil {
+						log.Error(ctx, "API: Error authenticating username", "auth", "jwt-header", "username", jwtUsername, "remoteAddr", r.RemoteAddr, err)
+					}
+				}
+
+				// If JWT authentication failed or wasn't attempted, try traditional Subsonic authentication
+				if jwtUsername == "" || err != nil {
+					p := req.Params(r)
+					username, _ := p.String("u")
+					pass, _ := p.String("p")
+					token, _ := p.String("t")
+					salt, _ := p.String("s")
+					jwt, _ := p.String("jwt")
+
+					usr, err = ds.User(ctx).FindByUsernameWithPassword(username)
+					if errors.Is(err, context.Canceled) {
+						log.Debug(ctx, "API: Request canceled when authenticating", "auth", "subsonic", "username", username, "remoteAddr", r.RemoteAddr, err)
+						return
+					}
+					switch {
+					case errors.Is(err, model.ErrNotFound):
 						log.Warn(ctx, "API: Invalid login", "auth", "subsonic", "username", username, "remoteAddr", r.RemoteAddr, err)
+					case err != nil:
+						log.Error(ctx, "API: Error authenticating username", "auth", "subsonic", "username", username, "remoteAddr", r.RemoteAddr, err)
+					default:
+						err = validateCredentials(usr, pass, token, salt, jwt)
+						if err != nil {
+							log.Warn(ctx, "API: Invalid login", "auth", "subsonic", "username", username, "remoteAddr", r.RemoteAddr, err)
+						}
 					}
 				}
 			}

@@ -209,6 +209,10 @@ func (s *Server) mountAuthenticationRoutes() chi.Router {
 			r.Post("/login", login(s.ds))
 		}
 		r.Post("/createAdmin", createAdmin(s.ds))
+
+		// OIDC routes
+		r.Get("/oidc/login", oidcLogin(s.ds))
+		r.Get("/oidc/callback", oidcCallback(s.ds))
 	})
 }
 
