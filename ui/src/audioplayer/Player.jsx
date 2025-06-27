@@ -42,6 +42,7 @@ const Player = () => {
   const playerTheme = theme.player?.theme || 'dark'
   const dataProvider = useDataProvider()
   const playerState = useSelector((state) => state.player)
+  const endless = useSelector((state) => state.player.endless)
   const dispatch = useDispatch()
   const [currentTrackId, setCurrentTrackId] = useState(null)
   const [heartbeatTrackId, setHeartbeatTrackId] = useState(null)
@@ -365,7 +366,7 @@ const Player = () => {
       )
       const isLastSong = currentIndex === audioLists.length - 1
 
-      if (isLastSong) {
+      if (isLastSong && endless) {
         try {
           // Fetch a random song using the Subsonic API
           const randomSongsResponse = await subsonic.getRandomSongs(1)
@@ -390,10 +391,27 @@ const Player = () => {
 
             // Use playTracks to replace the queue and start playing the random song
             dispatch(playTracks(currentQueue, null, randomSong.id))
+          } else {
+            // eslint-disable-next-line no-console
+            console.warn('No random songs available for endless play')
+            if (showNotifications) {
+              sendNotification(
+                'Endless Play',
+                'No random songs available to continue playback',
+                null
+              )
+            }
           }
         } catch (error) {
           // eslint-disable-next-line no-console
-          console.log('Error fetching random song:', error)
+          console.error('Error fetching random song for endless play:', error)
+          if (showNotifications) {
+            sendNotification(
+              'Endless Play Error',
+              'Failed to fetch random song for continuous playback',
+              null
+            )
+          }
         }
       }
 
@@ -402,7 +420,7 @@ const Player = () => {
         // eslint-disable-next-line no-console
         .catch((e) => console.log('Keepalive error:', e))
     },
-    [dispatch, dataProvider, currentTrackId],
+    [dispatch, dataProvider, currentTrackId, endless],
   )
 
   const onCoverClick = useCallback((mode, audioLists, audioInfo) => {
