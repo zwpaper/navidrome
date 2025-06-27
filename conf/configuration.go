@@ -88,6 +88,7 @@ type configOptions struct {
 	PasswordEncryptionKey           string
 	ReverseProxyUserHeader          string
 	ReverseProxyWhitelist           string
+	OIDC                            oidcOptions `json:",omitzero"`
 	Plugins                         pluginsOptions
 	PluginConfig                    map[string]map[string]string
 	HTTPSecurityHeaders             secureOptions       `json:",omitzero"`
@@ -177,6 +178,16 @@ type listenBrainzOptions struct {
 
 type secureOptions struct {
 	CustomFrameOptionsValue string
+}
+
+type oidcOptions struct {
+	Enabled      bool
+	ClientID     string
+	ClientSecret string
+	IssuerURL    string
+	RedirectURI  string
+	Scopes       []string
+	AdminGroup   string
 }
 
 type prometheusOptions struct {
@@ -524,6 +535,13 @@ func setViperDefaults() {
 	viper.SetDefault("passwordencryptionkey", "")
 	viper.SetDefault("reverseproxyuserheader", "Remote-User")
 	viper.SetDefault("reverseproxywhitelist", "")
+	viper.SetDefault("oidc.enabled", false)
+	viper.SetDefault("oidc.clientid", "")
+	viper.SetDefault("oidc.clientsecret", "")
+	viper.SetDefault("oidc.issuerurl", "")
+	viper.SetDefault("oidc.redirecturi", "")
+	viper.SetDefault("oidc.scopes", []string{"openid", "profile", "email", "groups"})
+	viper.SetDefault("oidc.admingroup", "ADMIN")
 	viper.SetDefault("prometheus.enabled", false)
 	viper.SetDefault("prometheus.metricspath", consts.PrometheusDefaultPath)
 	viper.SetDefault("prometheus.password", "")

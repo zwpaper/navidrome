@@ -37,6 +37,7 @@ const defaultConfig = {
   publicBaseUrl: '/share',
   separator: '/',
   enableInspect: true,
+  oidcEnabled: false,
 }
 
 let config
