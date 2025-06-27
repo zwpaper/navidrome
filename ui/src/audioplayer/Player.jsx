@@ -20,6 +20,7 @@ import {
   addTracks,
   clearQueue,
   currentPlaying,
+  playNext,
   playTracks,
   setPlayMode,
   setVolume,
@@ -44,6 +45,7 @@ const Player = () => {
   const [startTime, setStartTime] = useState(null)
   const [scrobbled, setScrobbled] = useState(false)
   const [preloaded, setPreload] = useState(false)
+  const [endlessAdded, setEndlessAdded] = useState(false)
   const [audioInstance, setAudioInstance] = useState(null)
   const isDesktop = useMediaQuery('(min-width:810px)')
   const isMobilePlayer =
@@ -163,7 +165,7 @@ const Player = () => {
   }, [playerState])
 
   const onAudioProgress = useCallback(
-    (info) => {
+    async (info) => {
       if (info.ended) {
         document.title = 'Navidrome'
       }
@@ -175,6 +177,52 @@ const Player = () => {
 
       if (info.isRadio) {
         return
+      }
+
+      // Check if we need to add an endless song when near the end of the last song
+      if (endless && !endlessAdded && progress > 95) {
+        const currentIndex = playerState.queue.findIndex(item => item.uuid === info.uuid)
+        const isLastSong = currentIndex === playerState.queue.length - 1
+
+        if (isLastSong) {
+          setEndlessAdded(true)
+          try {
+            // Fetch a random song using the Subsonic API
+            const randomSongsResponse = await subsonic.getRandomSongs(1)
+
+            if (randomSongsResponse.json &&
+                randomSongsResponse.json['subsonic-response'] &&
+                randomSongsResponse.json['subsonic-response'].randomSongs &&
+                randomSongsResponse.json['subsonic-response'].randomSongs.song &&
+                randomSongsResponse.json['subsonic-response'].randomSongs.song.length > 0) {
+
+              const randomSong = randomSongsResponse.json['subsonic-response'].randomSongs.song[0]
+
+              // Add the random song to play next (right after current song)
+              dispatch(playNext({ [randomSong.id]: randomSong }))
+            } else {
+              // eslint-disable-next-line no-console
+              console.warn('No random songs available for endless play')
+              if (showNotifications) {
+                sendNotification(
+                  'Endless Play',
+                  'No random songs available to continue playback',
+                  null
+                )
+              }
+            }
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error('Error fetching random song for endless play:', error)
+            if (showNotifications) {
+              sendNotification(
+                'Endless Play Error',
+                'Failed to fetch random song for continuous playback',
+                null
+              )
+            }
+          }
+        }
       }
 
       if (!preloaded) {
@@ -192,7 +240,7 @@ const Player = () => {
         setScrobbled(true)
       }
     },
-    [startTime, scrobbled, nextSong, preloaded],
+    [startTime, scrobbled, nextSong, preloaded, endless, endlessAdded, playerState.queue, dispatch, showNotifications],
   )
 
   const onAudioVolumeChange = useCallback(
@@ -247,6 +295,8 @@ const Player = () => {
     if (startTime !== null) {
       setStartTime(null)
     }
+    // Reset endless flag when track changes
+    setEndlessAdded(false)
   }, [scrobbled, startTime])
 
   const onAudioPause = useCallback(
@@ -260,62 +310,12 @@ const Player = () => {
       setStartTime(null)
       dispatch(currentPlaying(info))
 
-      // Check if we've reached the end of the playlist
-      const currentIndex = audioLists.findIndex(item => item.uuid === info.uuid)
-      const isLastSong = currentIndex === audioLists.length - 1
-
-      if (isLastSong && endless) {
-        try {
-          // Fetch a random song using the Subsonic API
-          const randomSongsResponse = await subsonic.getRandomSongs(1)
-
-          if (randomSongsResponse.json &&
-              randomSongsResponse.json['subsonic-response'] &&
-              randomSongsResponse.json['subsonic-response'].randomSongs &&
-              randomSongsResponse.json['subsonic-response'].randomSongs.song &&
-              randomSongsResponse.json['subsonic-response'].randomSongs.song.length > 0) {
-
-            const randomSong = randomSongsResponse.json['subsonic-response'].randomSongs.song[0]
-
-            // Create a new queue with all existing songs plus the random song
-            const currentQueue = {}
-            audioLists.forEach(item => {
-              currentQueue[item.trackId] = item.song
-            })
-            currentQueue[randomSong.id] = randomSong
-
-            // Use playTracks to replace the queue and start playing the random song
-            dispatch(playTracks(currentQueue, null, randomSong.id))
-          } else {
-            // eslint-disable-next-line no-console
-            console.warn('No random songs available for endless play')
-            if (showNotifications) {
-              sendNotification(
-                'Endless Play',
-                'No random songs available to continue playback',
-                null
-              )
-            }
-          }
-        } catch (error) {
-          // eslint-disable-next-line no-console
-          console.error('Error fetching random song for endless play:', error)
-          if (showNotifications) {
-            sendNotification(
-              'Endless Play Error',
-              'Failed to fetch random song for continuous playback',
-              null
-            )
-          }
-        }
-      }
-
       dataProvider
         .getOne('keepalive', { id: info.trackId })
         // eslint-disable-next-line no-console
         .catch((e) => console.log('Keepalive error:', e))
     },
-    [dispatch, dataProvider, endless],
+    [dispatch, dataProvider],
   )
 
   const onCoverClick = useCallback((mode, audioLists, audioInfo) => {
