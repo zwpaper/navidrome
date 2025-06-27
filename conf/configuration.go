@@ -104,6 +104,7 @@ type configOptions struct {
 	AuthWindowLength                time.Duration
 	PasswordEncryptionKey           string
 	ExtAuth                         extAuthOptions
+	OIDC                            oidcOptions `json:",omitzero"`
 	Plugins                         pluginsOptions
 	HTTPHeaders                     httpHeaderOptions   `json:",omitzero"`
 	Prometheus                      prometheusOptions   `json:",omitzero"`
@@ -233,6 +234,16 @@ type jellyfinOptions struct {
 
 type httpHeaderOptions struct {
 	FrameOptions string
+}
+
+type oidcOptions struct {
+	Enabled      bool
+	ClientID     string
+	ClientSecret string
+	IssuerURL    string
+	RedirectURI  string
+	Scopes       []string
+	AdminGroup   string
 }
 
 type prometheusOptions struct {
@@ -821,6 +832,13 @@ func setViperDefaults() {
 	viper.SetDefault("extauth.userheader", "Remote-User")
 	viper.SetDefault("extauth.trustedsources", "")
 	viper.SetDefault("extauth.logouturl", "")
+	viper.SetDefault("oidc.enabled", false)
+	viper.SetDefault("oidc.clientid", "")
+	viper.SetDefault("oidc.clientsecret", "")
+	viper.SetDefault("oidc.issuerurl", "")
+	viper.SetDefault("oidc.redirecturi", "")
+	viper.SetDefault("oidc.scopes", []string{"openid", "profile", "email", "groups"})
+	viper.SetDefault("oidc.admingroup", "ADMIN")
 	viper.SetDefault("prometheus.enabled", false)
 	viper.SetDefault("prometheus.metricspath", consts.PrometheusDefaultPath)
 	viper.SetDefault("prometheus.password", "")
