@@ -49,6 +49,19 @@ func login(ds model.DataStore) func(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// buildAuthPayloadWithToken builds auth payload including JWT token
+func buildAuthPayloadWithToken(user *model.User) (map[string]interface{}, error) {
+	tokenString, err := auth.CreateToken(user)
+	if err != nil {
+		return nil, err
+	}
+
+	payload := buildAuthPayload(user)
+	payload["token"] = tokenString
+
+	return payload, nil
+}
+
 func doLogin(ds model.DataStore, username string, password string, w http.ResponseWriter, r *http.Request) {
 	user, err := validateLogin(ds.User(r.Context()), username, password)
 	if err != nil {
@@ -61,13 +74,11 @@ func doLogin(ds model.DataStore, username string, password string, w http.Respon
 		return
 	}
 
-	tokenString, err := auth.CreateToken(user)
+	payload, err := buildAuthPayloadWithToken(user)
 	if err != nil {
 		_ = rest.RespondWithError(w, http.StatusInternalServerError, "Unknown error authenticating user. Please try again")
 		return
 	}
-	payload := buildAuthPayload(user)
-	payload["token"] = tokenString
 	_ = rest.RespondWithJSON(w, http.StatusOK, payload)
 }
 
@@ -364,6 +375,7 @@ func handleLoginFromHeaders(ds model.DataStore, r *http.Request) map[string]inte
 		return nil
 	}
 
+	// Header authentication should not include JWT token
 	return buildAuthPayload(user)
 }
 
@@ -591,12 +603,15 @@ func oidcCallback(ds model.DataStore) func(w http.ResponseWriter, r *http.Reques
 			log.Error(r, "Could not update LastLoginAt for OIDC user", "user", username, err)
 		}
 
-		// Generate JWT token
-		tokenString, err := auth.CreateToken(user)
+		// Reuse the login token logic
+		payload, err := buildAuthPayloadWithToken(user)
 		if err != nil {
 			_ = rest.RespondWithError(w, http.StatusInternalServerError, "Failed to create authentication token")
 			return
 		}
+
+		// Extract token for cookie
+		tokenString := payload["token"].(string)
 
 		// Set authentication cookie
 		http.SetCookie(w, &http.Cookie{
@@ -609,7 +624,6 @@ func oidcCallback(ds model.DataStore) func(w http.ResponseWriter, r *http.Reques
 			MaxAge:   int(conf.Server.SessionTimeout.Seconds()),
 		})
 
-		payload := buildAuthPayload(user)
 		payloadJson, err := json.Marshal(payload)
 		if err != nil {
 			log.Error(r, "Error converting auth payload to JSON", "payload", payload, err)
