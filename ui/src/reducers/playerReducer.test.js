@@ -1,12 +1,57 @@
 import { describe, it, expect } from 'vitest'
 import { playerReducer } from './playerReducer'
 import {
+  PLAYER_ADD_TRACKS,
   PLAYER_SYNC_QUEUE,
   PLAYER_CURRENT,
   PLAYER_REFRESH_QUEUE,
 } from '../actions'
 
 describe('playerReducer', () => {
+  describe('PLAYER_ADD_TRACKS', () => {
+    it('appends without mutating or replacing the current playback state', () => {
+      const originalQueue = [
+        {
+          trackId: 'song-1',
+          uuid: 'current-uuid',
+          name: 'Current song',
+        },
+      ]
+      const current = {
+        trackId: 'song-1',
+        uuid: 'current-uuid',
+        name: 'Current song',
+      }
+      const state = {
+        queue: originalQueue,
+        current,
+        savedPlayIndex: 0,
+        clear: false,
+        volume: 1,
+      }
+
+      const result = playerReducer(state, {
+        type: PLAYER_ADD_TRACKS,
+        data: {
+          'song-2': {
+            id: 'song-2',
+            title: 'Random song',
+            artist: 'Random artist',
+          },
+        },
+      })
+
+      expect(result.queue).not.toBe(originalQueue)
+      expect(originalQueue).toHaveLength(1)
+      expect(result.queue).toHaveLength(2)
+      expect(result.queue[0]).toBe(originalQueue[0])
+      expect(result.queue[1].trackId).toBe('song-2')
+      expect(result.current).toBe(current)
+      expect(result.savedPlayIndex).toBe(0)
+      expect(result.clear).toBe(false)
+    })
+  })
+
   describe('pending track selection survives SYNC_QUEUE and premature CURRENT', () => {
     // Simulates the real sequence when clicking a new song while one is playing:
     // 1. PLAYER_PLAY_TRACKS sets playIndex and clear
