@@ -2,9 +2,9 @@ import React from 'react'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { useMediaQuery } from '@material-ui/core'
 import { useGetOne } from 'react-admin'
-import { useDispatch } from 'react-redux'
+import { useDispatch, useSelector } from 'react-redux'
 import { useToggleLove } from '../common'
-import { openSaveQueueDialog } from '../actions'
+import { openSaveQueueDialog, setEndless } from '../actions'
 import PlayerToolbar from './PlayerToolbar'
 
 // Mock dependencies
@@ -22,6 +22,7 @@ vi.mock('react-admin', () => ({
 
 vi.mock('react-redux', () => ({
   useDispatch: vi.fn(),
+  useSelector: vi.fn(),
 }))
 
 vi.mock('../common', () => ({
@@ -35,6 +36,7 @@ vi.mock('../common', () => ({
 
 vi.mock('../actions', () => ({
   openSaveQueueDialog: vi.fn(),
+  setEndless: vi.fn(),
 }))
 
 vi.mock('react-hotkeys', () => ({
@@ -51,7 +53,14 @@ describe('<PlayerToolbar />', () => {
     useGetOne.mockReturnValue({ data: mockSongData, loading: false })
     useToggleLove.mockReturnValue([mockToggleLove, false])
     useDispatch.mockReturnValue(mockDispatch)
+    useSelector.mockImplementation((selector) =>
+      selector({ player: { endless: false } }),
+    )
     openSaveQueueDialog.mockReturnValue({ type: 'OPEN_SAVE_QUEUE_DIALOG' })
+    setEndless.mockReturnValue({
+      type: 'PLAYER_SET_ENDLESS',
+      data: { endless: true },
+    })
   })
 
   afterEach(cleanup)
@@ -68,8 +77,9 @@ describe('<PlayerToolbar />', () => {
       const listItems = screen.getAllByRole('listitem')
       expect(listItems).toHaveLength(1)
 
-      // Verify both buttons are rendered
+      // Verify all buttons are rendered
       expect(screen.getByTestId('save-queue-button')).toBeInTheDocument()
+      expect(screen.getByTestId('endless-play-button')).toBeInTheDocument()
       expect(screen.getByTestId('love-button')).toBeInTheDocument()
 
       // Verify desktop classes are applied
@@ -102,6 +112,18 @@ describe('<PlayerToolbar />', () => {
         type: 'OPEN_SAVE_QUEUE_DIALOG',
       })
     })
+
+    it('enables endless play when the endless button is clicked', () => {
+      render(<PlayerToolbar id="song-1" />)
+
+      fireEvent.click(screen.getByTestId('endless-play-button'))
+
+      expect(setEndless).toHaveBeenCalledWith(true)
+      expect(mockDispatch).toHaveBeenCalledWith({
+        type: 'PLAYER_SET_ENDLESS',
+        data: { endless: true },
+      })
+    })
   })
 
   describe('Mobile layout', () => {
@@ -114,15 +136,17 @@ describe('<PlayerToolbar />', () => {
 
       // Each button should be in its own list item
       const listItems = screen.getAllByRole('listitem')
-      expect(listItems).toHaveLength(2)
+      expect(listItems).toHaveLength(3)
 
-      // Verify both buttons are rendered
+      // Verify all buttons are rendered
       expect(screen.getByTestId('save-queue-button')).toBeInTheDocument()
+      expect(screen.getByTestId('endless-play-button')).toBeInTheDocument()
       expect(screen.getByTestId('love-button')).toBeInTheDocument()
 
       // Verify mobile classes are applied
       expect(listItems[0].className).toContain('mobileListItem')
       expect(listItems[1].className).toContain('mobileListItem')
+      expect(listItems[2].className).toContain('mobileListItem')
     })
 
     it('disables save queue button when isRadio is true', () => {

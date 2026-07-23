@@ -266,23 +266,66 @@ const Player = () => {
     [dispatch],
   )
 
-  const onAudioProgress = useCallback(
+  const onAudioProgress = useCallback((info) => {
+    if (info.ended) {
+      document.title = 'Navidrome'
+    }
+
+    if (!info.isRadio && info.currentTime != null) {
+      lastPositionMsRef.current = Math.floor(info.currentTime * 1000)
+    }
+  }, [])
+
+  const onAudioVolumeChange = useCallback(
+    // sqrt to compensate for the logarithmic volume
+    (volume) => dispatch(setVolume(Math.sqrt(volume))),
+    [dispatch],
+  )
+
+  const onAudioPlay = useCallback(
     async (info) => {
-      if (info.ended) {
-        document.title = 'Navidrome'
+      if (context && context.state !== 'running') {
+        context.resume()
       }
 
-      if (!info.isRadio && info.currentTime != null) {
-        lastPositionMsRef.current = Math.floor(info.currentTime * 1000)
+      dispatch(currentPlaying(info))
+      if (info.duration) {
+        const song = info.song
+        document.title = `${song.title} - ${song.artist} - Navidrome`
+        if (!info.isRadio) {
+          const posMs = Math.floor(info.currentTime * 1000)
+          lastPositionMsRef.current = posMs
+          const isNewTrack = info.trackId !== currentTrackId
+          if (isNewTrack) {
+            subsonic
+              .reportPlayback(info.trackId, posMs, 'starting')
+              .then(() =>
+                subsonic.reportPlayback(info.trackId, posMs, 'playing'),
+              )
+            setCurrentTrackId(info.trackId)
+          } else {
+            subsonic.reportPlayback(info.trackId, posMs, 'playing')
+          }
+          setHeartbeatTrackId(info.trackId)
+        }
+        if (config.gaTrackingId) {
+          ReactGA.event({
+            category: 'Player',
+            action: 'Play song',
+            label: `${song.title} - ${song.artist}`,
+          })
+        }
+        if (showNotifications) {
+          sendNotification(
+            song.title,
+            `${song.artist} - ${song.album}`,
+            info.cover,
+          )
+        }
       }
 
-      const progress = (info.currentTime / info.duration) * 100
-      if (info.isRadio || !Number.isFinite(progress)) {
-        return
-      }
-
-      // Check if we need to add an endless song when near the end of the last song
-      if (endless && !endlessAdded && progress > 95) {
+      // Check if we need to add an endless song
+      if (endless && !endlessAdded) {
         const currentIndex = playerState.queue.findIndex(
           (item) => item.uuid === info.uuid,
         )
@@ -333,58 +376,15 @@ const Player = () => {
         }
       }
     },
-    [dispatch, endless, endlessAdded, playerState.queue, showNotifications],
-  )
-
-  const onAudioVolumeChange = useCallback(
-    // sqrt to compensate for the logarithmic volume
-    (volume) => dispatch(setVolume(Math.sqrt(volume))),
-    [dispatch],
-  )
-
-  const onAudioPlay = useCallback(
-    (info) => {
-      if (context && context.state !== 'running') {
-        context.resume()
-      }
-
-      dispatch(currentPlaying(info))
-      if (info.duration) {
-        const song = info.song
-        document.title = `${song.title} - ${song.artist} - Navidrome`
-        if (!info.isRadio) {
-          const posMs = Math.floor(info.currentTime * 1000)
-          lastPositionMsRef.current = posMs
-          const isNewTrack = info.trackId !== currentTrackId
-          if (isNewTrack) {
-            subsonic
-              .reportPlayback(info.trackId, posMs, 'starting')
-              .then(() =>
-                subsonic.reportPlayback(info.trackId, posMs, 'playing'),
-              )
-            setCurrentTrackId(info.trackId)
-          } else {
-            subsonic.reportPlayback(info.trackId, posMs, 'playing')
-          }
-          setHeartbeatTrackId(info.trackId)
-        }
-        if (config.gaTrackingId) {
-          ReactGA.event({
-            category: 'Player',
-            action: 'Play song',
-            label: `${song.title} - ${song.artist}`,
-          })
-        }
-        if (showNotifications) {
-          sendNotification(
-            song.title,
-            `${song.artist} - ${song.album}`,
-            info.cover,
-          )
-        }
-      }
-    },
-    [context, dispatch, showNotifications, currentTrackId],
+    [
+      context,
+      currentTrackId,
+      dispatch,
+      endless,
+      endlessAdded,
+      playerState.queue,
+      showNotifications,
+    ],
   )
 
   const onAudioPlayTrackChange = useCallback(() => {
