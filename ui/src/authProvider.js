@@ -66,11 +66,20 @@ const authProvider = {
 
   logout: () => {
     removeItems()
-    if (config.extAuthLogoutURL) {
-      window.location.href = config.extAuthLogoutURL
-      return Promise.resolve(false)
-    }
-    return Promise.resolve()
+    const clearOIDCSession = config.oidcEnabled
+      ? fetch(baseUrl('/auth/oidc/logout'), {
+          method: 'POST',
+          credentials: 'include',
+        }).catch(() => undefined)
+      : Promise.resolve()
+
+    return clearOIDCSession.then(() => {
+      if (config.extAuthLogoutURL) {
+        window.location.href = config.extAuthLogoutURL
+        return false
+      }
+      return undefined
+    })
   },
 
   checkAuth: () =>
@@ -110,6 +119,7 @@ const removeItems = () => {
   localStorage.removeItem('subsonic-salt')
   localStorage.removeItem('subsonic-token')
   localStorage.removeItem('is-authenticated')
+  localStorage.removeItem('oidc-authenticated')
 
   // Clean up OIDC auth token cookie on logout
   document.cookie =
@@ -132,6 +142,7 @@ function checkOIDCAuthentication() {
         payload.token = token
         jwtDecode(token) // Validate token
         storeAuthenticationInfo(payload)
+        localStorage.setItem('oidc-authenticated', 'true')
 
         // Clean up payload cookie (but keep auth token for browser requests)
         document.cookie =

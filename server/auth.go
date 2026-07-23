@@ -36,6 +36,17 @@ var (
 	ErrUnauthenticated = errors.New("request not authenticated")
 )
 
+const (
+	oidcAuthTokenCookie    = "oidc_auth_token"
+	oidcAuthPayloadCookie  = "oidc_auth_payload"
+	oidcRefreshTokenCookie = "oidc_refresh_token"
+	oidcStateCookie        = "oidc_state"
+)
+
+func oidcCookieSecure(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(conf.Server.BaseScheme, "https")
+}
+
 func login(ds model.DataStore) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		username, password, err := getCredentialsFromBody(r)
@@ -203,7 +214,7 @@ func tokenFromOIDCCookie(r *http.Request) string {
 		return ""
 	}
 
-	cookie, err := r.Cookie("oidc_auth_token")
+	cookie, err := r.Cookie(oidcAuthTokenCookie)
 	if err != nil {
 		return ""
 	}
@@ -420,11 +431,11 @@ func oidcLogin(ds model.DataStore) func(w http.ResponseWriter, r *http.Request) 
 
 		state := generateStateToken()
 		http.SetCookie(w, &http.Cookie{
-			Name:     "oidc_state",
+			Name:     oidcStateCookie,
 			Value:    state,
 			Path:     "/",
 			HttpOnly: true,
-			Secure:   r.TLS != nil,
+			Secure:   oidcCookieSecure(r),
 			SameSite: http.SameSiteLaxMode,
 			MaxAge:   600, // 10 minutes
 		})
@@ -441,11 +452,8 @@ func oidcCallback(ds model.DataStore) func(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
-		fmt.Printf("Callback URL: %s\n", r.URL.String())
-		fmt.Printf("Configured RedirectURI: %s\n", conf.Server.OIDC.RedirectURI)
-
 		// Verify state token
-		stateCookie, err := r.Cookie("oidc_state")
+		stateCookie, err := r.Cookie(oidcStateCookie)
 		if err != nil || stateCookie.Value != r.URL.Query().Get("state") {
 			log.Warn(r, "Invalid OIDC state token")
 			_ = rest.RespondWithError(w, http.StatusBadRequest, "Invalid state token")
@@ -454,17 +462,15 @@ func oidcCallback(ds model.DataStore) func(w http.ResponseWriter, r *http.Reques
 
 		// Clear state cookie
 		http.SetCookie(w, &http.Cookie{
-			Name:     "oidc_state",
+			Name:     oidcStateCookie,
 			Value:    "",
 			Path:     "/",
 			HttpOnly: true,
 			MaxAge:   -1,
 		})
 
-		fmt.Println("OIDC Callback received")
-
 		// Exchange code for token
-		config, err := getOIDCConfig(r.Context())
+		provider, config, err := getOIDCProviderAndConfig(r.Context())
 		if err != nil {
 			log.Error(r, "Failed to get OIDC configuration", err)
 			_ = rest.RespondWithError(w, http.StatusInternalServerError, "OIDC configuration error")
@@ -479,13 +485,6 @@ func oidcCallback(ds model.DataStore) func(w http.ResponseWriter, r *http.Reques
 		}
 
 		// Extract user info from ID token
-		provider, err := oidc.NewProvider(r.Context(), conf.Server.OIDC.IssuerURL)
-		if err != nil {
-			log.Error(r, "Failed to create OIDC provider", err)
-			_ = rest.RespondWithError(w, http.StatusInternalServerError, "OIDC provider error")
-			return
-		}
-
 		verifier := provider.Verifier(&oidc.Config{ClientID: conf.Server.OIDC.ClientID})
 		rawIDToken, ok := token.Extra("id_token").(string)
 		if !ok {
@@ -602,14 +601,18 @@ func oidcCallback(ds model.DataStore) func(w http.ResponseWriter, r *http.Reques
 
 		// Set authentication cookie
 		http.SetCookie(w, &http.Cookie{
-			Name:     "oidc_auth_token",
+			Name:     oidcAuthTokenCookie,
 			Value:    tokenString,
 			Path:     "/",
 			HttpOnly: false, // Allow JavaScript access for the auth provider
-			Secure:   r.TLS != nil,
+			Secure:   oidcCookieSecure(r),
 			SameSite: http.SameSiteLaxMode,
 			MaxAge:   int(conf.Server.SessionTimeout.Seconds()),
 		})
+
+		if token.RefreshToken != "" {
+			setOIDCRefreshTokenCookie(w, r, token.RefreshToken)
+		}
 
 		payloadJson, err := json.Marshal(payload)
 		if err != nil {
@@ -619,11 +622,11 @@ func oidcCallback(ds model.DataStore) func(w http.ResponseWriter, r *http.Reques
 		// Set payload cookie - encode to base64 to avoid invalid characters
 		payloadEncoded := base64.StdEncoding.EncodeToString(payloadJson)
 		http.SetCookie(w, &http.Cookie{
-			Name:     "oidc_auth_payload",
+			Name:     oidcAuthPayloadCookie,
 			Value:    payloadEncoded,
 			Path:     "/",
 			HttpOnly: false, // Allow JavaScript access
-			Secure:   r.TLS != nil,
+			Secure:   oidcCookieSecure(r),
 			SameSite: http.SameSiteLaxMode,
 			MaxAge:   60, // Short-lived, just for the redirect
 		})
@@ -634,18 +637,24 @@ func oidcCallback(ds model.DataStore) func(w http.ResponseWriter, r *http.Reques
 }
 
 func getOIDCConfig(ctx context.Context) (*oauth2.Config, error) {
+	_, config, err := getOIDCProviderAndConfig(ctx)
+	return config, err
+}
+
+func getOIDCProviderAndConfig(ctx context.Context) (*oidc.Provider, *oauth2.Config, error) {
 	provider, err := oidc.NewProvider(ctx, conf.Server.OIDC.IssuerURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create OIDC provider: %w", err)
+		return nil, nil, fmt.Errorf("failed to create OIDC provider: %w", err)
 	}
 
-	return &oauth2.Config{
+	config := &oauth2.Config{
 		ClientID:     conf.Server.OIDC.ClientID,
 		ClientSecret: conf.Server.OIDC.ClientSecret,
 		RedirectURL:  conf.Server.OIDC.RedirectURI,
 		Endpoint:     provider.Endpoint(),
 		Scopes:       conf.Server.OIDC.Scopes,
-	}, nil
+	}
+	return provider, config, nil
 }
 
 func generateStateToken() string {
@@ -707,4 +716,157 @@ func extractGroupsClaim(claims map[string]interface{}) []string {
 	}
 
 	return groups
+}
+
+func setOIDCRefreshTokenCookie(w http.ResponseWriter, r *http.Request, refreshToken string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     oidcRefreshTokenCookie,
+		Value:    base64.RawURLEncoding.EncodeToString([]byte(refreshToken)),
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   oidcCookieSecure(r),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func clearOIDCCookies(w http.ResponseWriter, r *http.Request) {
+	for _, cookie := range []struct {
+		name     string
+		httpOnly bool
+	}{
+		{name: oidcAuthTokenCookie},
+		{name: oidcAuthPayloadCookie},
+		{name: oidcRefreshTokenCookie, httpOnly: true},
+		{name: oidcStateCookie, httpOnly: true},
+	} {
+		http.SetCookie(w, &http.Cookie{
+			Name:     cookie.name,
+			Value:    "",
+			Path:     "/",
+			HttpOnly: cookie.httpOnly,
+			Secure:   oidcCookieSecure(r),
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   -1,
+		})
+	}
+}
+
+func oidcLogout(w http.ResponseWriter, r *http.Request) {
+	clearOIDCCookies(w, r)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func claimsFromOIDCToken(ctx context.Context, provider *oidc.Provider, token *oauth2.Token) (map[string]interface{}, error) {
+	if rawIDToken, ok := token.Extra("id_token").(string); ok {
+		verifier := provider.Verifier(&oidc.Config{ClientID: conf.Server.OIDC.ClientID})
+		idToken, err := verifier.Verify(ctx, rawIDToken)
+		if err != nil {
+			return nil, fmt.Errorf("failed to verify refreshed ID token: %w", err)
+		}
+
+		var claims map[string]interface{}
+		if err := idToken.Claims(&claims); err != nil {
+			return nil, fmt.Errorf("failed to parse refreshed ID token claims: %w", err)
+		}
+		return claims, nil
+	}
+
+	userInfo, err := provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve refreshed user info: %w", err)
+	}
+
+	var claims map[string]interface{}
+	if err := userInfo.Claims(&claims); err != nil {
+		return nil, fmt.Errorf("failed to parse refreshed user info claims: %w", err)
+	}
+	return claims, nil
+}
+
+// oidcRefresh exchanges the provider refresh token for a new Navidrome session.
+func oidcRefresh(ds model.DataStore) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !conf.Server.OIDC.Enabled {
+			_ = rest.RespondWithError(w, http.StatusNotFound, "OIDC not enabled")
+			return
+		}
+
+		cookie, err := r.Cookie(oidcRefreshTokenCookie)
+		if err != nil || cookie.Value == "" {
+			_ = rest.RespondWithError(w, http.StatusUnauthorized, "No OIDC refresh token")
+			return
+		}
+
+		refreshToken, err := base64.RawURLEncoding.DecodeString(cookie.Value)
+		if err != nil {
+			clearOIDCCookies(w, r)
+			_ = rest.RespondWithError(w, http.StatusUnauthorized, "Invalid OIDC refresh token")
+			return
+		}
+
+		provider, config, err := getOIDCProviderAndConfig(r.Context())
+		if err != nil {
+			log.Error(r, "Failed to get OIDC configuration while refreshing session", err)
+			_ = rest.RespondWithError(w, http.StatusInternalServerError, "OIDC provider error")
+			return
+		}
+
+		token, err := config.TokenSource(r.Context(), &oauth2.Token{
+			RefreshToken: string(refreshToken),
+		}).Token()
+		if err != nil {
+			log.Warn(r, "Failed to refresh OIDC provider token", err)
+			clearOIDCCookies(w, r)
+			_ = rest.RespondWithError(w, http.StatusUnauthorized, "OIDC session expired")
+			return
+		}
+
+		claims, err := claimsFromOIDCToken(r.Context(), provider, token)
+		if err != nil {
+			log.Warn(r, "Failed to validate refreshed OIDC identity", err)
+			clearOIDCCookies(w, r)
+			_ = rest.RespondWithError(w, http.StatusUnauthorized, "Invalid refreshed OIDC identity")
+			return
+		}
+
+		username, _ := claims["preferred_username"].(string)
+		if username == "" {
+			username, _ = claims["email"].(string)
+		}
+		if username == "" {
+			clearOIDCCookies(w, r)
+			_ = rest.RespondWithError(w, http.StatusUnauthorized, "No username in claims")
+			return
+		}
+
+		userRepo := ds.User(r.Context())
+		user, err := userRepo.FindByUsername(username)
+		if err != nil || user == nil {
+			clearOIDCCookies(w, r)
+			_ = rest.RespondWithError(w, http.StatusUnauthorized, "User not found")
+			return
+		}
+
+		payload, err := buildAuthPayloadWithToken(user)
+		if err != nil {
+			_ = rest.RespondWithError(w, http.StatusInternalServerError, "Failed to create token")
+			return
+		}
+		tokenString := payload["token"].(string)
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     oidcAuthTokenCookie,
+			Value:    tokenString,
+			Path:     "/",
+			HttpOnly: false,
+			Secure:   oidcCookieSecure(r),
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(conf.Server.SessionTimeout.Seconds()),
+		})
+		if token.RefreshToken != "" {
+			setOIDCRefreshTokenCookie(w, r, token.RefreshToken)
+		}
+
+		_ = rest.RespondWithJSON(w, http.StatusOK, payload)
+	}
 }

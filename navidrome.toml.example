@@ -1,0 +1,57 @@
+# Navidrome Configuration File Example
+# Copy this file to navidrome.toml and modify as needed
+
+# Basic Server Configuration
+MusicFolder = "/path/to/your/music"
+DataFolder = "/path/to/data"
+Address = "0.0.0.0"
+Port = 4533
+
+# Authentication
+AuthRequestLimit = 5
+AuthWindowLength = "20s"
+
+# OIDC/SSO Authentication Configuration
+[OIDC]
+# Enable OIDC authentication
+Enabled = false
+
+# OIDC Provider Configuration
+# Example for Keycloak:
+IssuerURL = "https://your-keycloak.example.com/auth/realms/your-realm"
+ClientID = "navidrome"
+ClientSecret = "your-client-secret"
+RedirectURI = "https://your-navidrome.example.com/auth/oidc/callback"
+
+# Scopes to request (default: ["openid", "profile", "email", "groups"])
+Scopes = ["openid", "profile", "email", "groups"]
+
+# Members of this OIDC group are granted administrator privileges
+AdminGroup = "ADMIN"
+
+# Examples for other OIDC providers:
+#
+# Google:
+# IssuerURL = "https://accounts.google.com"
+# ClientID = "your-google-client-id.apps.googleusercontent.com"
+# ClientSecret = "your-google-client-secret"
+# RedirectURI = "https://your-navidrome.example.com/auth/oidc/callback"
+#
+# Azure AD:
+# IssuerURL = "https://login.microsoftonline.com/your-tenant-id/v2.0"
+# ClientID = "your-azure-app-id"
+# ClientSecret = "your-azure-client-secret"
+# RedirectURI = "https://your-navidrome.example.com/auth/oidc/callback"
+#
+# Auth0:
+# IssuerURL = "https://your-domain.auth0.com"
+# ClientID = "your-auth0-client-id"
+# ClientSecret = "your-auth0-client-secret"
+# RedirectURI = "https://your-navidrome.example.com/auth/oidc/callback"
+
+# Other Configuration Options
+UIWelcomeMessage = "Welcome to Navidrome!"
+DefaultTheme = "Dark"
+DefaultLanguage = ""
+EnableDownloads = true
+EnableSharing = true

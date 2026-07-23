@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -340,6 +341,146 @@ var _ = Describe("Auth", func() {
 			u, err := ds.User(context.Background()).FindByUsername("seconduser")
 			Expect(err).To(BeNil())
 			Expect(u.IsAdmin).To(BeFalse())
+		})
+	})
+
+	Describe("OIDC session refresh", func() {
+		var (
+			ds                   model.DataStore
+			provider             *httptest.Server
+			providerURL          string
+			receivedRefreshToken string
+		)
+
+		BeforeEach(func() {
+			oldEnabled := conf.Server.OIDC.Enabled
+			oldIssuerURL := conf.Server.OIDC.IssuerURL
+			oldClientID := conf.Server.OIDC.ClientID
+			oldClientSecret := conf.Server.OIDC.ClientSecret
+			oldRedirectURI := conf.Server.OIDC.RedirectURI
+			oldScopes := conf.Server.OIDC.Scopes
+			oldBaseScheme := conf.Server.BaseScheme
+			DeferCleanup(func() {
+				conf.Server.OIDC.Enabled = oldEnabled
+				conf.Server.OIDC.IssuerURL = oldIssuerURL
+				conf.Server.OIDC.ClientID = oldClientID
+				conf.Server.OIDC.ClientSecret = oldClientSecret
+				conf.Server.OIDC.RedirectURI = oldRedirectURI
+				conf.Server.OIDC.Scopes = oldScopes
+				conf.Server.BaseScheme = oldBaseScheme
+			})
+
+			provider = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/.well-known/openid-configuration":
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
+						"issuer":                                providerURL,
+						"authorization_endpoint":                providerURL + "/authorize",
+						"token_endpoint":                        providerURL + "/token",
+						"userinfo_endpoint":                     providerURL + "/userinfo",
+						"jwks_uri":                              providerURL + "/keys",
+						"response_types_supported":              []string{"code"},
+						"subject_types_supported":               []string{"public"},
+						"id_token_signing_alg_values_supported": []string{"RS256"},
+					})
+				case "/token":
+					_ = r.ParseForm()
+					receivedRefreshToken = r.Form.Get("refresh_token")
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
+						"access_token":  "new-access-token",
+						"refresh_token": "rotated-refresh-token",
+						"token_type":    "Bearer",
+						"expires_in":    3600,
+					})
+				case "/userinfo":
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
+						"sub":                "provider-user-id",
+						"preferred_username": "janedoe",
+						"name":               "Jane Doe",
+						"email":              "jane@example.com",
+					})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			providerURL = provider.URL
+			DeferCleanup(provider.Close)
+
+			conf.Server.OIDC.Enabled = true
+			conf.Server.OIDC.IssuerURL = providerURL
+			conf.Server.OIDC.ClientID = "navidrome"
+			conf.Server.OIDC.ClientSecret = "secret"
+			conf.Server.OIDC.RedirectURI = "http://navidrome.test/auth/oidc/callback"
+			conf.Server.OIDC.Scopes = []string{"openid", "profile", "email"}
+			conf.Server.BaseScheme = "https"
+
+			ds = &tests.MockDataStore{}
+			auth.Init(ds)
+			Expect(ds.User(context.Background()).Put(&model.User{
+				ID:       "111",
+				UserName: "janedoe",
+				Name:     "Jane",
+			})).To(Succeed())
+		})
+
+		It("exchanges the provider refresh token and returns a new Navidrome token", func() {
+			req := httptest.NewRequest(http.MethodPost, "/auth/oidc/refresh", nil)
+			req.AddCookie(&http.Cookie{
+				Name:  oidcRefreshTokenCookie,
+				Value: base64.RawURLEncoding.EncodeToString([]byte("original-refresh-token")),
+			})
+			resp := httptest.NewRecorder()
+
+			oidcRefresh(ds)(resp, req)
+
+			Expect(resp.Code).To(Equal(http.StatusOK))
+			Expect(receivedRefreshToken).To(Equal("original-refresh-token"))
+
+			var payload map[string]interface{}
+			Expect(json.Unmarshal(resp.Body.Bytes(), &payload)).To(Succeed())
+			Expect(payload["username"]).To(Equal("janedoe"))
+			Expect(payload["token"]).ToNot(BeEmpty())
+
+			claims, err := auth.Validate(payload["token"].(string))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(claims.Subject).To(Equal("janedoe"))
+
+			cookies := resp.Result().Cookies()
+			Expect(cookies).To(HaveLen(2))
+			Expect(cookies[0].Name).To(Equal(oidcAuthTokenCookie))
+			Expect(cookies[1].Name).To(Equal(oidcRefreshTokenCookie))
+			Expect(cookies[1].HttpOnly).To(BeTrue())
+			Expect(cookies[1].Secure).To(BeTrue())
+			rotatedToken, err := base64.RawURLEncoding.DecodeString(cookies[1].Value)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(string(rotatedToken)).To(Equal("rotated-refresh-token"))
+		})
+
+		It("rejects refresh requests without a provider refresh token", func() {
+			req := httptest.NewRequest(http.MethodPost, "/auth/oidc/refresh", nil)
+			resp := httptest.NewRecorder()
+
+			oidcRefresh(ds)(resp, req)
+
+			Expect(resp.Code).To(Equal(http.StatusUnauthorized))
+		})
+
+		It("clears all OIDC cookies on logout", func() {
+			req := httptest.NewRequest(http.MethodPost, "/auth/oidc/logout", nil)
+			resp := httptest.NewRecorder()
+
+			oidcLogout(resp, req)
+
+			Expect(resp.Code).To(Equal(http.StatusNoContent))
+			cookies := resp.Result().Cookies()
+			Expect(cookies).To(HaveLen(4))
+			for _, cookie := range cookies {
+				Expect(cookie.MaxAge).To(Equal(-1))
+				Expect(cookie.Secure).To(BeTrue())
+			}
+			Expect(cookies[2].Name).To(Equal(oidcRefreshTokenCookie))
+			Expect(cookies[2].HttpOnly).To(BeTrue())
 		})
 	})
 })
